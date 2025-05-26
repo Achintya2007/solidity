@@ -1,0 +1,280 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/**
+ * @title Supply Chain Transparency Platform
+ * @dev Smart contract for end-to-end product tracking and verification
+ * @author Supply Chain Development Team
+ */
+contract Project {
+    
+    // Product structure with essential tracking information
+    struct Product {
+        uint256 id;
+        string name;
+        string description;
+        address manufacturer;
+        uint256 timestamp;
+        string currentLocation;
+        ProductStatus status;
+        string[] locationHistory;
+        uint256[] timeHistory;
+        address[] handlers;
+        bool exists;
+    }
+    
+    // Product lifecycle status
+    enum ProductStatus {
+        Created,
+        InTransit,
+        Delivered,
+        Verified,
+        Recalled
+    }
+    
+    // State variables
+    mapping(uint256 => Product) public products;
+    mapping(address => bool) public authorizedUsers;
+    mapping(uint256 => mapping(address => bool)) public productAccess;
+    
+    uint256 public productCount;
+    address public owner;
+    
+    // Events for transparency
+    event ProductRegistered(uint256 indexed productId, string name, address indexed manufacturer);
+    event ProductMoved(uint256 indexed productId, string newLocation, address indexed handler);
+    event ProductStatusChanged(uint256 indexed productId, ProductStatus newStatus);
+    event UserAuthorized(address indexed user);
+    
+    // Modifiers
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner allowed");
+        _;
+    }
+    
+    modifier onlyAuthorized() {
+        require(authorizedUsers[msg.sender] || msg.sender == owner, "Not authorized");
+        _;
+    }
+    
+    modifier productExists(uint256 _productId) {
+        require(products[_productId].exists, "Product not found");
+        _;
+    }
+    
+    modifier hasAccess(uint256 _productId) {
+        require(
+            productAccess[_productId][msg.sender] || 
+            products[_productId].manufacturer == msg.sender ||
+            msg.sender == owner,
+            "Access denied"
+        );
+        _;
+    }
+    
+    constructor() {
+        owner = msg.sender;
+        authorizedUsers[msg.sender] = true;
+        productCount = 0;
+    }
+    
+    /**
+     * @dev CORE FUNCTION 1: Register new product in the supply chain
+     * @param _name Product name
+     * @param _description Product description  
+     * @param _initialLocation Starting location
+     * @return productId Unique identifier for the product
+     */
+    function registerProduct(
+        string memory _name,
+        string memory _description,
+        string memory _initialLocation
+    ) external onlyAuthorized returns (uint256) {
+        require(bytes(_name).length > 0, "Name required");
+        require(bytes(_initialLocation).length > 0, "Location required");
+        
+        productCount++;
+        uint256 newProductId = productCount;
+        
+        Product storage newProduct = products[newProductId];
+        newProduct.id = newProductId;
+        newProduct.name = _name;
+        newProduct.description = _description;
+        newProduct.manufacturer = msg.sender;
+        newProduct.timestamp = block.timestamp;
+        newProduct.currentLocation = _initialLocation;
+        newProduct.status = ProductStatus.Created;
+        newProduct.exists = true;
+        
+        // Initialize tracking arrays
+        newProduct.locationHistory.push(_initialLocation);
+        newProduct.timeHistory.push(block.timestamp);
+        newProduct.handlers.push(msg.sender);
+        
+        // Grant access to manufacturer
+        productAccess[newProductId][msg.sender] = true;
+        
+        emit ProductRegistered(newProductId, _name, msg.sender);
+        
+        return newProductId;
+    }
+    
+    /**
+     * @dev CORE FUNCTION 2: Update product location and status during transport
+     * @param _productId Product identifier
+     * @param _newLocation New location in supply chain
+     * @param _newStatus Updated product status
+     */
+    function updateProductJourney(
+        uint256 _productId,
+        string memory _newLocation,
+        ProductStatus _newStatus
+    ) external 
+      productExists(_productId) 
+      hasAccess(_productId) 
+      onlyAuthorized 
+    {
+        require(bytes(_newLocation).length > 0, "Location required");
+        require(uint8(_newStatus) <= 4, "Invalid status");
+        
+        Product storage product = products[_productId];
+        
+        // Update current state
+        product.currentLocation = _newLocation;
+        product.status = _newStatus;
+        
+        // Add to history
+        product.locationHistory.push(_newLocation);
+        product.timeHistory.push(block.timestamp);
+        
+        // Add handler if new
+        bool handlerExists = false;
+        for (uint i = 0; i < product.handlers.length; i++) {
+            if (product.handlers[i] == msg.sender) {
+                handlerExists = true;
+                break;
+            }
+        }
+        if (!handlerExists) {
+            product.handlers.push(msg.sender);
+        }
+        
+        emit ProductMoved(_productId, _newLocation, msg.sender);
+        emit ProductStatusChanged(_productId, _newStatus);
+    }
+    
+    function getProductDetails(uint256 _productId) 
+        external 
+        view 
+        productExists(_productId)
+        hasAccess(_productId)
+        returns (
+            string memory name,
+            string memory description,
+            address manufacturer,
+            uint256 createdTime,
+            string memory currentLocation,
+            ProductStatus status,
+            string[] memory locationHistory,
+            uint256[] memory timeHistory,
+            address[] memory handlers
+        ) 
+    {
+        Product storage product = products[_productId];
+        
+        return (
+            product.name,
+            product.description,
+            product.manufacturer,
+            product.timestamp,
+            product.currentLocation,
+            product.status,
+            product.locationHistory,
+            product.timeHistory,
+            product.handlers
+        );
+    }
+    
+    // Additional utility functions
+    
+    /**
+     * @dev Authorize new user to interact with platform
+     * @param _user Address to authorize
+     */
+    function authorizeUser(address _user) external onlyOwner {
+        require(_user != address(0), "Invalid address");
+        require(!authorizedUsers[_user], "Already authorized");
+        
+        authorizedUsers[_user] = true;
+        emit UserAuthorized(_user);
+    }
+    
+    /**
+     * @dev Grant product access to specific user
+     * @param _productId Product identifier
+     * @param _user User address
+     */
+    function grantProductAccess(uint256 _productId, address _user) 
+        external 
+        productExists(_productId) 
+    {
+        require(
+            products[_productId].manufacturer == msg.sender || msg.sender == owner,
+            "Only manufacturer or owner can grant access"
+        );
+        require(authorizedUsers[_user], "User must be authorized first");
+        
+        productAccess[_productId][_user] = true;
+    }
+    
+    /**
+     * @dev Get public product summary (limited info)
+     * @param _productId Product identifier
+     */
+    function getProductSummary(uint256 _productId) 
+        external 
+        view 
+        productExists(_productId)
+        returns (
+            string memory name,
+            address manufacturer,
+            ProductStatus status,
+            string memory currentLocation
+        ) 
+    {
+        Product storage product = products[_productId];
+        return (
+            product.name,
+            product.manufacturer,
+            product.status,
+            product.currentLocation
+        );
+    }
+    
+    /**
+     * @dev Verify product authenticity
+     * @param _productId Product identifier
+     * @return isValid True if product exists and is authentic
+     */
+    function verifyProduct(uint256 _productId) 
+        external 
+        view 
+        returns (bool isValid) 
+    {
+        return products[_productId].exists;
+    }
+    
+    /**
+     * @dev Get total products in system
+     */
+    function getTotalProducts() external view returns (uint256) {
+        return productCount;
+    }
+    
+    /**
+     * @dev Check if user is authorized
+     */
+    function isAuthorizedUser(address _user) external view returns (bool) {
+        return authorizedUsers[_user];
+    }
+}
