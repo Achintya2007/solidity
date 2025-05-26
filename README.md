@@ -1,3 +1,4 @@
+![Screenshot 2025-05-26 134929](https://github.com/user-attachments/assets/5f54efa2-4a84-46f4-89de-925d2552e4e8)
 # 📦 Supply Chain Transparency Platform
 
 A Solidity-based smart contract enabling end-to-end **tracking**, **verification**, and **transparency** in supply chain systems. This platform ensures product integrity by recording location updates, status changes, and authorized user interactions on the Ethereum blockchain.
